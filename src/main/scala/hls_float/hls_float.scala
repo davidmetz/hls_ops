@@ -2,7 +2,7 @@ package hls_float
 
 import circt.stage.ChiselStage
 import circt.stage.FirtoolOption
-import chisel3._
+import chisel3.{RawModule, _}
 import chisel3.util._
 import chisel3.reflect._
 import float32._
@@ -49,6 +49,18 @@ class HandshakeSingleDelay(width: Int) extends Module {
 }
 
 class op_SITOFP_I32W_O32W extends RawModule {
+  val i0 = IO(new Handshake(SInt(32.W)))
+  val o0 = IO(Flipped(new Handshake(UInt(32.W))))
+  val clk = IO(Input(Clock()))
+  val reset = IO(Input(Bool()))
+  withClockAndReset(clk, reset) {
+    o0.valid := i0.valid
+    i0.ready := o0.ready
+    o0.data := i0.data.toFloat32().asUInt
+  }
+}
+
+class op_SIToFP_I32W_O32W extends RawModule {
   val i0 = IO(new Handshake(SInt(32.W)))
   val o0 = IO(Flipped(new Handshake(UInt(32.W))))
   val clk = IO(Input(Clock()))
@@ -155,7 +167,7 @@ class op_FPOP_sub_I32W_I32W_O32W extends RawModule {
 //    }
 //}
 
-class op_FPOP_add_I32W_I32W_O32W extends RawModule {
+class vivado_FADD_test extends RawModule {
   val i0 = IO(new Handshake(UInt(32.W)))
   val i1 = IO(new Handshake(UInt(32.W)))
   val o0 = IO(Flipped(new Handshake(UInt(32.W))))
@@ -184,6 +196,37 @@ class op_FPOP_add_I32W_I32W_O32W extends RawModule {
   mod.m_axis_result_tready := o0.ready
 }
 
+class op_FPOP_add_I32W_I32W_O32W extends RawModule {
+  val i0 = IO(new Handshake(UInt(32.W)))
+  val i1 = IO(new Handshake(UInt(32.W)))
+  val o0 = IO(Flipped(new Handshake(UInt(32.W))))
+  val clk = IO(Input(Clock()))
+  val reset = IO(Input(Bool()))
+
+  withModulePrefix(desiredName) {
+    withClockAndReset(clock = clk, reset = reset) {
+      val mod = Module(new vivado_fadd_comb).io
+      val delay = Module(new HandshakeSingleDelay(32))
+
+      // Connect input handshakes (i0, i1) to mod's input AXI-Stream ports
+      mod.s_axis_a_tvalid := i0.valid
+      mod.s_axis_a_tdata := i0.data
+      i0.ready := delay.i0.fire()
+
+      mod.s_axis_b_tvalid := i1.valid
+      mod.s_axis_b_tdata := i1.data
+      i1.ready := delay.i0.fire()
+
+      // Connect output handshakes (o0) to mod's output AXI-Stream ports
+      delay.i0.valid := mod.m_axis_result_tvalid
+      o0.valid := delay.o0.valid
+      delay.i0.data := mod.m_axis_result_tdata
+      o0.data := delay.o0.data
+      delay.o0.ready := o0.ready
+    }
+  }
+}
+
 class op_FPOP_mul_I32W_I32W_O32W extends RawModule {
   val i0 = IO(new Handshake(UInt(32.W)))
   val i1 = IO(new Handshake(UInt(32.W)))
@@ -191,21 +234,28 @@ class op_FPOP_mul_I32W_I32W_O32W extends RawModule {
   val clk = IO(Input(Clock()))
   val reset = IO(Input(Bool()))
 
-  val mod = Module(new vivado_fmul_blocking).io
+  withModulePrefix(desiredName) {
+    withClockAndReset(clock = clk, reset = reset) {
+      val mod = Module(new vivado_fmul_comb).io
+      val delay = Module(new HandshakeSingleDelay(32))
 
-  // Connect input handshakes (i0, i1) to mod's input AXI-Stream ports
-  mod.s_axis_a_tvalid := i0.valid
-  mod.s_axis_a_tdata := i0.data
-  i0.ready := mod.s_axis_a_tready
+      // Connect input handshakes (i0, i1) to mod's input AXI-Stream ports
+      mod.s_axis_a_tvalid := i0.valid
+      mod.s_axis_a_tdata := i0.data
+      i0.ready := delay.i0.fire()
 
-  mod.s_axis_b_tvalid := i1.valid
-  mod.s_axis_b_tdata := i1.data
-  i1.ready := mod.s_axis_b_tready
+      mod.s_axis_b_tvalid := i1.valid
+      mod.s_axis_b_tdata := i1.data
+      i1.ready := delay.i0.fire()
 
-  // Connect output handshakes (o0) to mod's output AXI-Stream ports
-  o0.valid := mod.m_axis_result_tvalid
-  o0.data := mod.m_axis_result_tdata
-  mod.m_axis_result_tready := o0.ready
+      // Connect output handshakes (o0) to mod's output AXI-Stream ports
+      delay.i0.valid := mod.m_axis_result_tvalid
+      o0.valid := delay.o0.valid
+      delay.i0.data := mod.m_axis_result_tdata
+      o0.data := delay.o0.data
+      delay.o0.ready := o0.ready
+    }
+  }
 }
 
 class op_FP_0_0E_0__O32W extends RawModule {
@@ -226,6 +276,38 @@ class op_FP_1_0E_0__O32W extends RawModule {
     o0.valid := true.B
     o0.data := 1.U.toFloat32().asUInt
   }
+}
+
+class op_FP_2_0E_0__O32W extends RawModule {
+  val o0 = IO(Flipped(new Handshake(UInt(32.W))))
+  val clk = IO(Input(Clock()))
+  val reset = IO(Input(Bool()))
+  withClockAndReset(clk, reset) {
+    o0.valid := true.B
+    o0.data := 2.U.toFloat32().asUInt
+  }
+}
+
+class vivado_fadd_comb extends BlackBox {
+  val io = IO(new Bundle {
+    val s_axis_a_tvalid = Input(Bool())
+    val s_axis_a_tdata = Input(UInt(32.W))
+    val s_axis_b_tvalid = Input(Bool())
+    val s_axis_b_tdata = Input(UInt(32.W))
+    val m_axis_result_tvalid = Output(Bool())
+    val m_axis_result_tdata = Output(UInt(32.W))
+  })
+}
+
+class vivado_fmul_comb extends BlackBox {
+  val io = IO(new Bundle {
+    val s_axis_a_tvalid = Input(Bool())
+    val s_axis_a_tdata = Input(UInt(32.W))
+    val s_axis_b_tvalid = Input(Bool())
+    val s_axis_b_tdata = Input(UInt(32.W))
+    val m_axis_result_tvalid = Output(Bool())
+    val m_axis_result_tdata = Output(UInt(32.W))
+  })
 }
 
 class vivado_fadd_blocking extends BlackBox {
@@ -605,10 +687,11 @@ object VerilogGenerator extends App {
   //    emitVerilog(new op_FP2UI_I32W_O32W)
   //    emitVerilog(new op_FP2SI_I32W_O32W)
   //    emitVerilog(new op_FPOP_sub_I32W_I32W_O32W)
-  //    emitVerilog(new op_FPOP_add_I32W_I32W_O32W)
-  //    emitVerilog(new op_FPOP_mul_I32W_I32W_O32W)
+//      emitVerilog(new op_FPOP_add_I32W_I32W_O32W)
+//      emitVerilog(new op_FPOP_mul_I32W_I32W_O32W)
   //    emitVerilog(new op_FP_0_0E_0__O32W)
   //    emitVerilog(new op_FP_1_0E_0__O32W)
+      emitVerilog(new op_FP_2_0E_0__O32W)
   //    emitVerilog(new spmv_kernel_fadd_32ns_32ns_32_3_full_dsp_1_ip)
   //    emitVerilog(new spmv_kernel_fmul_32ns_32ns_32_2_max_dsp_1_ip)
   //    emitVerilog(new spmv_kernel_fadd_32ns_32ns_32_4_full_dsp_1_ip)
@@ -726,61 +809,255 @@ object VerilogGenerator extends App {
 //  emitVerilog(RhlsBuf.from_name("op_HLS_BUF_128_I128W_O128W"))
 //    emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
 //    emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_bit32_I64W_I32W_O32W_O64W"))
+//    emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_ptr_I64W_I64W_O64W_O64W"))
 
-  emitVerilog(new RhlsBuf(1, 1, false))
-  emitVerilog(new RhlsBuf(1, 1, true))
-  emitVerilog(new RhlsBuf(1, 2, false))
-  emitVerilog(new RhlsBuf(1, 2, true))
-  emitVerilog(new RhlsBuf(1, 8, false))
-  emitVerilog(new RhlsBuf(1, 8, true))
-  emitVerilog(new RhlsBuf(1, 16, false))
-  emitVerilog(new RhlsBuf(1, 16, true))
-  emitVerilog(new RhlsBuf(1, 32, false))
-  emitVerilog(new RhlsBuf(1, 32, true))
-  emitVerilog(new RhlsBuf(1, 64, false))
-  emitVerilog(new RhlsBuf(1, 64, true))
-  emitVerilog(new RhlsBuf(1, 128, false))
-  emitVerilog(new RhlsBuf(1, 128, true))
-  emitVerilog(new RhlsBuf(2, 1, false))
-  emitVerilog(new RhlsBuf(2, 1, true))
-  emitVerilog(new RhlsBuf(2, 2, false))
-  emitVerilog(new RhlsBuf(2, 2, true))
-  emitVerilog(new RhlsBuf(2, 8, false))
-  emitVerilog(new RhlsBuf(2, 8, true))
-  emitVerilog(new RhlsBuf(2, 16, false))
-  emitVerilog(new RhlsBuf(2, 16, true))
-  emitVerilog(new RhlsBuf(2, 32, false))
-  emitVerilog(new RhlsBuf(2, 32, true))
-  emitVerilog(new RhlsBuf(2, 64, false))
-  emitVerilog(new RhlsBuf(2, 64, true))
-  emitVerilog(new RhlsBuf(2, 128, false))
-  emitVerilog(new RhlsBuf(2, 128, true))
-  emitVerilog(new RhlsBuf(4, 1, false))
-  emitVerilog(new RhlsBuf(4, 1, true))
-  emitVerilog(new RhlsBuf(4, 2, false))
-  emitVerilog(new RhlsBuf(4, 2, true))
-  emitVerilog(new RhlsBuf(4, 8, false))
-  emitVerilog(new RhlsBuf(4, 8, true))
-  emitVerilog(new RhlsBuf(4, 16, false))
-  emitVerilog(new RhlsBuf(4, 16, true))
-  emitVerilog(new RhlsBuf(4, 32, false))
-  emitVerilog(new RhlsBuf(4, 32, true))
-  emitVerilog(new RhlsBuf(4, 64, false))
-  emitVerilog(new RhlsBuf(4, 64, true))
-  emitVerilog(new RhlsBuf(4, 128, false))
-  emitVerilog(new RhlsBuf(4, 128, true))
-  emitVerilog(new RhlsBuf(8, 1, false))
-  emitVerilog(new RhlsBuf(8, 1, true))
-  emitVerilog(new RhlsBuf(8, 2, false))
-  emitVerilog(new RhlsBuf(8, 2, true))
-  emitVerilog(new RhlsBuf(8, 8, false))
-  emitVerilog(new RhlsBuf(8, 8, true))
-  emitVerilog(new RhlsBuf(8, 16, false))
-  emitVerilog(new RhlsBuf(8, 16, true))
-  emitVerilog(new RhlsBuf(8, 32, false))
-  emitVerilog(new RhlsBuf(8, 32, true))
-  emitVerilog(new RhlsBuf(8, 64, false))
-  emitVerilog(new RhlsBuf(8, 64, true))
-  emitVerilog(new RhlsBuf(8, 128, false))
-  emitVerilog(new RhlsBuf(8, 128, true))
+//  emitVerilog(new RhlsBuf(0, 1, true))
+//  emitVerilog(new RhlsBuf(0, 2, true))
+//  emitVerilog(new RhlsBuf(0, 8, true))
+//  emitVerilog(new RhlsBuf(0, 16, true))
+//  emitVerilog(new RhlsBuf(0, 32, true))
+//  emitVerilog(new RhlsBuf(0, 64, true))
+//  emitVerilog(new RhlsBuf(0, 128, true))
+//  emitVerilog(new RhlsBuf(1, 1, false))
+//  emitVerilog(new RhlsBuf(1, 1, true))
+//  emitVerilog(new RhlsBuf(1, 2, false))
+//  emitVerilog(new RhlsBuf(1, 2, true))
+//  emitVerilog(new RhlsBuf(1, 8, false))
+//  emitVerilog(new RhlsBuf(1, 8, true))
+//  emitVerilog(new RhlsBuf(1, 16, false))
+//  emitVerilog(new RhlsBuf(1, 16, true))
+//  emitVerilog(new RhlsBuf(1, 32, false))
+//  emitVerilog(new RhlsBuf(1, 32, true))
+//  emitVerilog(new RhlsBuf(1, 64, false))
+//  emitVerilog(new RhlsBuf(1, 64, true))
+//  emitVerilog(new RhlsBuf(1, 128, false))
+//  emitVerilog(new RhlsBuf(1, 128, true))
+//  emitVerilog(new RhlsBuf(2, 1, false))
+//  emitVerilog(new RhlsBuf(2, 1, true))
+//  emitVerilog(new RhlsBuf(2, 2, false))
+//  emitVerilog(new RhlsBuf(2, 2, true))
+//  emitVerilog(new RhlsBuf(2, 8, false))
+//  emitVerilog(new RhlsBuf(2, 8, true))
+//  emitVerilog(new RhlsBuf(2, 16, false))
+//  emitVerilog(new RhlsBuf(2, 16, true))
+//  emitVerilog(new RhlsBuf(2, 32, false))
+//  emitVerilog(new RhlsBuf(2, 32, true))
+//  emitVerilog(new RhlsBuf(2, 64, false))
+//  emitVerilog(new RhlsBuf(2, 64, true))
+//  emitVerilog(new RhlsBuf(2, 128, false))
+//  emitVerilog(new RhlsBuf(2, 128, true))
+//  emitVerilog(new RhlsBuf(4, 1, false))
+//  emitVerilog(new RhlsBuf(4, 1, true))
+//  emitVerilog(new RhlsBuf(4, 2, false))
+//  emitVerilog(new RhlsBuf(4, 2, true))
+//  emitVerilog(new RhlsBuf(4, 8, false))
+//  emitVerilog(new RhlsBuf(4, 8, true))
+//  emitVerilog(new RhlsBuf(4, 16, false))
+//  emitVerilog(new RhlsBuf(4, 16, true))
+//  emitVerilog(new RhlsBuf(4, 32, false))
+//  emitVerilog(new RhlsBuf(4, 32, true))
+//  emitVerilog(new RhlsBuf(4, 64, false))
+//  emitVerilog(new RhlsBuf(4, 64, true))
+//  emitVerilog(new RhlsBuf(4, 128, false))
+//  emitVerilog(new RhlsBuf(4, 128, true))
+//  emitVerilog(new RhlsBuf(8, 1, false))
+//  emitVerilog(new RhlsBuf(8, 1, true))
+//  emitVerilog(new RhlsBuf(8, 2, false))
+//  emitVerilog(new RhlsBuf(8, 2, true))
+//  emitVerilog(new RhlsBuf(8, 8, false))
+//  emitVerilog(new RhlsBuf(8, 8, true))
+//  emitVerilog(new RhlsBuf(8, 16, false))
+//  emitVerilog(new RhlsBuf(8, 16, true))
+//  emitVerilog(new RhlsBuf(8, 32, false))
+//  emitVerilog(new RhlsBuf(8, 32, true))
+//  emitVerilog(new RhlsBuf(8, 64, false))
+//  emitVerilog(new RhlsBuf(8, 64, true))
+//  emitVerilog(new RhlsBuf(8, 128, false))
+//  emitVerilog(new RhlsBuf(8, 128, true))
+//  emitVerilog(new RhlsBuf(16, 1, false))
+//  emitVerilog(new RhlsBuf(32, 1, false))
+//  emitVerilog(new RhlsBuf(64, 1, false))
+//  emitVerilog(new RhlsBuf(16, 1, true))
+//  emitVerilog(new RhlsBuf(32, 1, true))
+//  emitVerilog(new RhlsBuf(64, 1, true))
+//  emitVerilog(new RhlsBuf(16, 2, false))
+//  emitVerilog(new RhlsBuf(32, 2, false))
+//  emitVerilog(new RhlsBuf(64, 2, false))
+//  emitVerilog(new RhlsBuf(16, 2, true))
+//  emitVerilog(new RhlsBuf(32, 2, true))
+//  emitVerilog(new RhlsBuf(64, 2, true))
+//  emitVerilog(new RhlsBuf(16, 8, false))
+//  emitVerilog(new RhlsBuf(32, 8, false))
+//  emitVerilog(new RhlsBuf(64, 8, false))
+//  emitVerilog(new RhlsBuf(16, 8, true))
+//  emitVerilog(new RhlsBuf(32, 8, true))
+//  emitVerilog(new RhlsBuf(64, 8, true))
+//  emitVerilog(new RhlsBuf(16, 16, false))
+//  emitVerilog(new RhlsBuf(32, 16, false))
+//  emitVerilog(new RhlsBuf(64, 16, false))
+//  emitVerilog(new RhlsBuf(16, 16, true))
+//  emitVerilog(new RhlsBuf(32, 16, true))
+//  emitVerilog(new RhlsBuf(64, 16, true))
+//  emitVerilog(new RhlsBuf(16, 32, false))
+//  emitVerilog(new RhlsBuf(32, 32, false))
+//  emitVerilog(new RhlsBuf(64, 32, false))
+//  emitVerilog(new RhlsBuf(16, 32, true))
+//  emitVerilog(new RhlsBuf(32, 32, true))
+//  emitVerilog(new RhlsBuf(64, 32, true))
+//  emitVerilog(new RhlsBuf(16, 64, false))
+//  emitVerilog(new RhlsBuf(32, 64, false))
+//  emitVerilog(new RhlsBuf(64, 64, false))
+//  emitVerilog(new RhlsBuf(16, 64, true))
+//  emitVerilog(new RhlsBuf(32, 64, true))
+//  emitVerilog(new RhlsBuf(64, 64, true))
+//  emitVerilog(new RhlsBuf(16, 128, false))
+//  emitVerilog(new RhlsBuf(32, 128, false))
+//  emitVerilog(new RhlsBuf(64, 128, false))
+//  emitVerilog(new RhlsBuf(16, 128, true))
+//  emitVerilog(new RhlsBuf(32, 128, true))
+//  emitVerilog(new RhlsBuf(64, 128, true))
+//  emitVerilog(new RhlsBuf(128, 1, false))
+//  emitVerilog(new RhlsBuf(128, 1, true))
+//  emitVerilog(new RhlsBuf(128, 2, false))
+//  emitVerilog(new RhlsBuf(128, 2, true))
+//  emitVerilog(new RhlsBuf(128, 8, false))
+//  emitVerilog(new RhlsBuf(128, 8, true))
+//  emitVerilog(new RhlsBuf(128, 16, false))
+//  emitVerilog(new RhlsBuf(128, 16, true))
+//  emitVerilog(new RhlsBuf(128, 32, false))
+//  emitVerilog(new RhlsBuf(128, 32, true))
+//  emitVerilog(new RhlsBuf(128, 64, false))
+//  emitVerilog(new RhlsBuf(128, 64, true))
+//  emitVerilog(new RhlsBuf(128, 128, false))
+//  emitVerilog(new RhlsBuf(128, 128, true))
+//  emitVerilog(new RhlsBuf(256, 1, false))
+//  emitVerilog(new RhlsBuf(256, 1, true))
+//  emitVerilog(new RhlsBuf(256, 2, false))
+//  emitVerilog(new RhlsBuf(256, 2, true))
+//  emitVerilog(new RhlsBuf(256, 8, false))
+//  emitVerilog(new RhlsBuf(256, 8, true))
+//  emitVerilog(new RhlsBuf(256, 16, false))
+//  emitVerilog(new RhlsBuf(256, 16, true))
+//  emitVerilog(new RhlsBuf(256, 32, false))
+//  emitVerilog(new RhlsBuf(256, 32, true))
+//  emitVerilog(new RhlsBuf(256, 64, false))
+//  emitVerilog(new RhlsBuf(256, 64, true))
+//  emitVerilog(new RhlsBuf(256, 128, false))
+//  emitVerilog(new RhlsBuf(256, 128, true))
+//  emitVerilog(new RhlsBuf(512, 1, false))
+//  emitVerilog(new RhlsBuf(512, 1, true))
+//  emitVerilog(new RhlsBuf(512, 2, false))
+//  emitVerilog(new RhlsBuf(512, 2, true))
+//  emitVerilog(new RhlsBuf(512, 8, false))
+//  emitVerilog(new RhlsBuf(512, 8, true))
+//  emitVerilog(new RhlsBuf(512, 16, false))
+//  emitVerilog(new RhlsBuf(512, 16, true))
+//  emitVerilog(new RhlsBuf(512, 32, false))
+//  emitVerilog(new RhlsBuf(512, 32, true))
+//  emitVerilog(new RhlsBuf(512, 64, false))
+//  emitVerilog(new RhlsBuf(512, 64, true))
+//  emitVerilog(new RhlsBuf(512, 128, false))
+//  emitVerilog(new RhlsBuf(512, 128, true))
+//  emitVerilog(new RhlsBuf(1024, 1, false))
+//  emitVerilog(new RhlsBuf(1024, 1, true))
+//  emitVerilog(new RhlsBuf(1024, 2, false))
+//  emitVerilog(new RhlsBuf(1024, 2, true))
+//  emitVerilog(new RhlsBuf(1024, 8, false))
+//  emitVerilog(new RhlsBuf(1024, 8, true))
+//  emitVerilog(new RhlsBuf(1024, 16, false))
+//  emitVerilog(new RhlsBuf(1024, 16, true))
+//  emitVerilog(new RhlsBuf(1024, 32, false))
+//  emitVerilog(new RhlsBuf(1024, 32, true))
+//  emitVerilog(new RhlsBuf(1024, 64, false))
+//  emitVerilog(new RhlsBuf(1024, 64, true))
+//  emitVerilog(new RhlsBuf(1024, 128, false))
+//  emitVerilog(new RhlsBuf(1024, 128, true))
+//  emitVerilog(new RhlsBuf(2048, 1, false))
+//  emitVerilog(new RhlsBuf(2048, 1, true))
+//  emitVerilog(new RhlsBuf(2048, 2, false))
+//  emitVerilog(new RhlsBuf(2048, 2, true))
+//  emitVerilog(new RhlsBuf(2048, 8, false))
+//  emitVerilog(new RhlsBuf(2048, 8, true))
+//  emitVerilog(new RhlsBuf(2048, 16, false))
+//  emitVerilog(new RhlsBuf(2048, 16, true))
+//  emitVerilog(new RhlsBuf(2048, 32, false))
+//  emitVerilog(new RhlsBuf(2048, 32, true))
+//  emitVerilog(new RhlsBuf(2048, 64, false))
+//  emitVerilog(new RhlsBuf(2048, 64, true))
+//  emitVerilog(new RhlsBuf(2048, 128, false))
+//  emitVerilog(new RhlsBuf(2048, 128, true))
+
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_float_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_bit64_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_bit32_I64W_I32W_O32W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_bit16_I64W_I16W_O16W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_bit8_I64W_I8W_O8W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_fixedvector_bit32_4__I64W_I128W_O128W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_256_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_128_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_64_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_32_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_16_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_8_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_4_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_2_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(RhlsDecLoad.from_name("op_HLS_DEC_LOAD_1_ptr_I64W_I64W_O64W_O64W"))
+//  emitVerilog(new RhlsBuf(1, 1, false))
+//  emitVerilog(new RhlsBuf(1, 1, true))
+//  emitVerilog(new RhlsBuf(1, 32, false))
+//  emitVerilog(new RhlsBuf(1, 32, true))
+//  emitVerilog(new RhlsBuf(128, 1, false))
+//  emitVerilog(new RhlsBuf(128, 1, true))
+//  emitVerilog(new RhlsBuf(64, 32, true))
+//  emitVerilog(new RhlsBuf(0, 1, true))
+//  emitVerilog(new RhlsBuf(0, 32, true))
+//  emitVerilog(new op_SIToFP_I32W_O32W)
 }
